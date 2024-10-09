@@ -126,4 +126,61 @@ app.get('/api/posts/:id', async (req, res) => {
   }
 });
 
+// 게시물 수정
+app.put('/api/posts/:id', upload.single('image'), async (req, res) => {
+  try {
+    const token = req.headers.authorization.split(' ')[1];
+    const decoded = jwt.verify(token, 'your_jwt_secret');
+    const postId = req.params.id;
+    const post = await Post.findById(postId);
+
+    if (!post) {
+      return res.status(404).json({ message: '게시물을 찾을 수 없습니다.' });
+    }
+
+    // 작성자와 요청자의 ID가 일치하는지 확인
+    if (post.author.toString() !== decoded.id) {
+      return res.status(403).json({ message: '게시물 수정 권한이 없습니다.' });
+    }
+
+    // 게시물 업데이트 로직
+    post.title = req.body.title || post.title;
+    post.content = req.body.content || post.content;
+    if (req.file) {
+      post.imageUrl = `/uploads/${req.file.filename}`;
+    }
+
+    await post.save();
+    res.json(post);
+  } catch (error) {
+    res.status(500).json({ message: '게시물 수정 실패', error: error.message });
+  }
+});
+
+// 게시물 삭제
+app.delete('/api/posts/:id', async (req, res) => {
+  try {
+    const token = req.headers.authorization.split(' ')[1];
+    const decoded = jwt.verify(token, 'your_jwt_secret');
+    const postId = req.params.id;
+    const post = await Post.findById(postId);
+
+    if (!post) {
+      return res.status(404).json({ message: '게시물을 찾을 수 없습니다.' });
+    }
+
+    // 작성자와 요청자의 ID가 일치하는지 확인
+    if (post.author.toString() !== decoded.id) {
+      return res.status(403).json({ message: '게시물 삭제 권한이 없습니다.' });
+    }
+
+    await Post.findByIdAndDelete(postId);
+    res.json({ message: '게시물이 삭제되었습니다.' });
+  } catch (error) {
+    res.status(500).json({ message: '게시물 삭제 실패', error: error.message });
+  }
+});
+
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+
