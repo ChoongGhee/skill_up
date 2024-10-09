@@ -3,8 +3,6 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const multer = require('multer');
-const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -12,10 +10,9 @@ const PORT = process.env.PORT || 5000;
 // Middleware
 app.use(cors());
 app.use(express.json());
-app.use('/uploads', express.static('uploads'));
 
 // MongoDB 연결
-mongoose.connect('mongodb://localhost:27017/boardapp');
+mongoose.connect('mongodb://localhost:27017/boardapp', { useNewUrlParser: true, useUnifiedTopology: true });
 
 // 사용자 모델
 const UserSchema = new mongoose.Schema({
@@ -25,31 +22,27 @@ const UserSchema = new mongoose.Schema({
 
 const User = mongoose.model('User', UserSchema);
 
-// 게시물 모델
+// 게시물 모델 (이미지 URL 필드 제거)
 const PostSchema = new mongoose.Schema({
   title: { type: String, required: true },
   content: { type: String, required: true },
   author: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  imageUrl: { type: String },
   createdAt: { type: Date, default: Date.now },
 });
 
 const Post = mongoose.model('Post', PostSchema);
 
-
-// Multer 설정
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, 'uploads/');
-  },
-  filename: function (req, file, cb) {
-    cb(null, Date.now() + path.extname(file.originalname));
-  }
+// 댓글 모델
+const CommentSchema = new mongoose.Schema({
+  content: { type: String, required: true },
+  author: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  post: { type: mongoose.Schema.Types.ObjectId, ref: 'Post', required: true },
+  createdAt: { type: Date, default: Date.now },
 });
-const upload = multer({ storage: storage });
 
+const Comment = mongoose.model('Comment', CommentSchema);
+//@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
-// 라우트
 // 회원가입
 app.post('/api/register', async (req, res) => {
   try {
@@ -63,7 +56,6 @@ app.post('/api/register', async (req, res) => {
   }
 });
 
-
 // 로그인
 app.post('/api/login', async (req, res) => {
   try {
@@ -76,15 +68,17 @@ app.post('/api/login', async (req, res) => {
     if (!isMatch) {
       return res.status(400).json({ message: '비밀번호가 일치하지 않습니다.' });
     }
+
     const token = jwt.sign({ id: user._id }, 'your_jwt_secret', { expiresIn: '1h' });
     res.json({ token });
+
   } catch (error) {
     res.status(500).json({ message: '로그인 실패', error: error.message });
   }
 });
 
 // 게시물 작성
-app.post('/api/posts', upload.single('image'), async (req, res) => {
+app.post('/api/posts', async (req, res) => {
   try {
     const token = req.headers.authorization.split(' ')[1];
     const decoded = jwt.verify(token, 'your_jwt_secret');
@@ -93,7 +87,6 @@ app.post('/api/posts', upload.single('image'), async (req, res) => {
       title: req.body.title,
       content: req.body.content,
       author: decoded.id,
-      imageUrl: req.file ? `/uploads/${req.file.filename}` : null
     });
 
     await post.save();
@@ -127,7 +120,7 @@ app.get('/api/posts/:id', async (req, res) => {
 });
 
 // 게시물 수정
-app.put('/api/posts/:id', upload.single('image'), async (req, res) => {
+app.put('/api/posts/:id', async (req, res) => {
   try {
     const token = req.headers.authorization.split(' ')[1];
     const decoded = jwt.verify(token, 'your_jwt_secret');
@@ -138,17 +131,12 @@ app.put('/api/posts/:id', upload.single('image'), async (req, res) => {
       return res.status(404).json({ message: '게시물을 찾을 수 없습니다.' });
     }
 
-    // 작성자와 요청자의 ID가 일치하는지 확인
     if (post.author.toString() !== decoded.id) {
       return res.status(403).json({ message: '게시물 수정 권한이 없습니다.' });
     }
 
-    // 게시물 업데이트 로직
     post.title = req.body.title || post.title;
     post.content = req.body.content || post.content;
-    if (req.file) {
-      post.imageUrl = `/uploads/${req.file.filename}`;
-    }
 
     await post.save();
     res.json(post);
@@ -169,7 +157,6 @@ app.delete('/api/posts/:id', async (req, res) => {
       return res.status(404).json({ message: '게시물을 찾을 수 없습니다.' });
     }
 
-    // 작성자와 요청자의 ID가 일치하는지 확인
     if (post.author.toString() !== decoded.id) {
       return res.status(403).json({ message: '게시물 삭제 권한이 없습니다.' });
     }
@@ -181,6 +168,82 @@ app.delete('/api/posts/:id', async (req, res) => {
   }
 });
 
+// 사용자 삭제 (회원탈퇴)
+app.delete('/api/users', async (req, res) => {
+  try {
+    const token = req.headers.authorization.split(' ')[1];
+    const decoded = jwt.verify(token, 'your_jwt_secret'); // 'your_jwt_secret'은 실제 JWT 비밀 키로 대체
+    const userId = decoded.id;
+
+    // 사용자 삭제
+    const user = await User.findByIdAndDelete(userId);
+    if (!user) {
+      return res.status(404).json({ message: '사용자를 찾을 수 없습니다.' });
+    }
+
+    // 사용자가 작성한 모든 게시물도 삭제하거나, 다른 방식으로 처리할 수 있습니다.
+    // 여기서는 예시로 삭제하는 것으로 가정:
+    await Post.deleteMany({ author: userId });
+
+    res.json({ message: '사용자 계정이 성공적으로 삭제되었습니다.' });
+  } catch (error) {
+    res.status(500).json({ message: '사용자 삭제 실패', error: error.message });
+  }
+});
+
+app.post('/api/posts/:postId/comments', async (req, res) => {
+  try {
+    // 로그 추가
+    console.log('요청 헤더:', req.headers);
+    console.log('요청 본문:', req.body);  
+    console.log('요청 파라미터:', req.params);
+
+
+    const token = req.headers.authorization?.split(' ')[1]; // optional chaining for safety
+
+    if (!token) {
+      return res.status(401).json({ message: '토큰이 없습니다.' });
+    }
+
+    const decoded = jwt.verify(token, 'your_jwt_secret');
+    const { content } = req.body;
+    const { postId } = req.params;
+
+    if (!content) {
+      return res.status(400).json({ message: '댓글 내용을 입력하세요.' });
+    }
+
+    // 로그 추가
+    console.log('토큰 디코딩 결과:', decoded);
+    console.log('댓글 내용:', content);
+    console.log('게시글 ID:', postId);
+
+
+    const comment = new Comment({
+      content,
+      author: decoded.id, // decoded.id 가 아니라 decoded.userId라고 가정
+      post: postId,
+    });
+
+    await comment.save();
+    res.status(201).json(comment); // 저장된 댓글 객체 응답
+  } catch (error) {
+    console.error('댓글 추가 중 오류 발생:', error);
+    // 에러 메시지 상세히 출력
+    console.error('에러 스택:', error.stack);
+    res.status(500).json({ message: '댓글 추가 실패', error: error.message });
+  }
+});
+
+// 댓글 조회
+app.get('/api/posts/:postId/comments', async (req, res) => {
+  try {
+    const { postId } = req.params;
+    const comments = await Comment.find({ post: postId }).populate('author', 'username').populate('post', 'title');
+    res.json(comments);
+  } catch (error) {
+    res.status(500).json({ message: '댓글 조회 실패', error: error.message });
+  }
+});
+
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-
-
